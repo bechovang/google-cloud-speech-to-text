@@ -70,14 +70,10 @@ def transcribe_gcs(gcs_uri, language_code="vi-VN"):
         full_transcript += alternative.transcript + "\n"
 
         words = alternative.words
-        for i in range(0, len(words), 5):  # Nhóm 5 từ mỗi dòng phụ đề
-            group = words[i:i+5]
-            
-            # Sửa lỗi ở đây: dùng .seconds và .nanos thay vì .total_seconds()
-            start_sec = group[0].start_time.seconds + group[0].start_time.nanos * 1e-9
-            end_sec = group[-1].end_time.seconds + group[-1].end_time.nanos * 1e-9
-
-            text = " ".join([w.word for w in group])
+        for word_info in words:
+            start_sec = word_info.start_time.total_seconds()
+            end_sec = word_info.end_time.total_seconds()
+            text = word_info.word
 
             srt_lines.append(f"{line_index}")
             srt_lines.append(f"{to_srt_time(start_sec)} --> {to_srt_time(end_sec)}")
@@ -122,7 +118,7 @@ if __name__ == "__main__":
     # Thông tin dự án và bucket
     PROJECT_ID = "speach-to-text-462517"
     BUCKET_NAME = "bechovang-speach-to-text"
-    LOCAL_AUDIO_FILE = "audio.wav"  # Thay bằng tên file của bạn (WAV, MP3, FLAC,...)
+    LOCAL_AUDIO_FILE = "audio.wav"
     GCS_BLOB_NAME = "uploaded_audio" + os.path.splitext(LOCAL_AUDIO_FILE)[1]
 
     # Kiểm tra file âm thanh tồn tại
