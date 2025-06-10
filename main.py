@@ -1,4 +1,5 @@
 import os
+import time
 from google.cloud import storage, speech
 
 
@@ -51,7 +52,6 @@ def transcribe_gcs(gcs_uri, language_code="vi-VN"):
     audio = speech.RecognitionAudio(uri=gcs_uri)
     config = speech.RecognitionConfig(
         encoding=encoding,
-        sample_rate_hertz=16000,
         language_code=language_code,
         enable_automatic_punctuation=True,
         enable_word_time_offsets=True  # Bật để lấy thời gian từng từ cho .srt
@@ -72,13 +72,15 @@ def transcribe_gcs(gcs_uri, language_code="vi-VN"):
         words = alternative.words
         for i in range(0, len(words), 5):  # Nhóm 5 từ mỗi dòng phụ đề
             group = words[i:i+5]
-            start_time = group[0].start_time.total_seconds()
-            end_time = group[-1].end_time.total_seconds()
+            
+            # Sửa lỗi ở đây: dùng .seconds và .nanos thay vì .total_seconds()
+            start_sec = group[0].start_time.seconds + group[0].start_time.nanos * 1e-9
+            end_sec = group[-1].end_time.seconds + group[-1].end_time.nanos * 1e-9
 
             text = " ".join([w.word for w in group])
 
             srt_lines.append(f"{line_index}")
-            srt_lines.append(f"{to_srt_time(start_time)} --> {to_srt_time(end_time)}")
+            srt_lines.append(f"{to_srt_time(start_sec)} --> {to_srt_time(end_sec)}")
             srt_lines.append(text)
             srt_lines.append("")
             line_index += 1
@@ -114,6 +116,9 @@ def save_srt(srt_lines, output_file="recognized_subtitles.srt"):
 
 # === CHẠY TOÀN BỘ ===
 if __name__ == "__main__":
+    # Thêm: Đo thời gian bắt đầu
+    start_time = time.time()
+
     # Thông tin dự án và bucket
     PROJECT_ID = "speach-to-text-462517"
     BUCKET_NAME = "bechovang-speach-to-text"
@@ -142,4 +147,11 @@ if __name__ == "__main__":
             # Bước 4: Luôn xóa file trên GCS sau khi hoàn tất
             delete_from_gcs(BUCKET_NAME, GCS_BLOB_NAME)
 
-        print("✅ Hoàn tất toàn bộ quá trình!")
+            # Tính và in thời gian xử lý
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+
+            print(f"✅ Hoàn tất toàn bộ quá trình!")
+            print(f"⏱️ Tổng thời gian xử lý: {minutes} phút {seconds} giây")
