@@ -1,0 +1,32 @@
+# Thư mục của virtual environment
+venv/
+
+# Các tệp log tạm thời
+*.log
+
+# Các tệp Python bytecode
+*.pyc
+*.pyo
+__pycache__/
+
+# Tệp cấu hình IDE hoặc editor
+.idea/
+.vscode/
+
+# Thư mục và tệp liên quan đến cài đặt môi trường
+*.env
+.env/
+
+# Thư mục và tệp backups hoặc tạm
+*.bak
+*.tmp
+
+# File JSON credentials (Không bao giờ commit file JSON thuần)
+speech-stt-sa.json
+
+# Đảm bảo tệp ZIP sẽ được giữ lại để commit
+!*.zip
+
+# Các tệp của hệ điều hành (macOS, Windows, Linux)
+.DS_Store
+Thumbs.db

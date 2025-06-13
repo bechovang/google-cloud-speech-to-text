@@ -1,7 +1,22 @@
 import os
 import time
 from google.cloud import storage, speech
+from google.oauth2 import service_account
 
+# === Tự động thiết lập xác thực từ file JSON (file nằm cùng thư mục với main.py) ===
+def set_google_credentials():
+    # Lấy đường dẫn tuyệt đối tới file JSON credentials (nằm cùng thư mục với main.py)
+    json_credentials_path = os.path.join(os.path.dirname(__file__), "speech-stt-sa.json")
+    
+    # Kiểm tra xem file JSON có tồn tại không
+    if not os.path.exists(json_credentials_path):
+        raise FileNotFoundError(f"Không tìm thấy file JSON credentials tại {json_credentials_path}. Vui lòng kiểm tra lại file credentials.")
+
+    # Tự động thiết lập các thông tin xác thực cho Google Cloud
+    credentials = service_account.Credentials.from_service_account_file(
+        json_credentials_path
+    )
+    return credentials
 
 # === Xác định loại file âm thanh ===
 def get_audio_encoding(file_name):
@@ -20,8 +35,8 @@ def get_audio_encoding(file_name):
 
 
 # === Upload file âm thanh lên GCS ===
-def upload_to_gcs(bucket_name, source_file_name, destination_blob_name):
-    storage_client = storage.Client()
+def upload_to_gcs(credentials, bucket_name, source_file_name, destination_blob_name):
+    storage_client = storage.Client(credentials=credentials)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(destination_blob_name)
 
@@ -32,8 +47,8 @@ def upload_to_gcs(bucket_name, source_file_name, destination_blob_name):
 
 
 # === Xóa file trên GCS ===
-def delete_from_gcs(bucket_name, blob_name):
-    storage_client = storage.Client()
+def delete_from_gcs(credentials, bucket_name, blob_name):
+    storage_client = storage.Client(credentials=credentials)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
@@ -43,11 +58,12 @@ def delete_from_gcs(bucket_name, blob_name):
 
 
 # === Nhận diện giọng nói từ URI GCS ===
-def transcribe_gcs(gcs_uri, language_code="vi-VN"):
-    client = speech.SpeechClient()
+def transcribe_gcs(credentials, gcs_uri, language_code="vi-VN"):
+    client = speech.SpeechClient(credentials=credentials)
 
-    # Tự động xác định encoding dựa trên đuôi file
-    encoding = get_audio_encoding(gcs_uri)
+    # Lấy tên file từ gcs_uri và xác định encoding
+    file_name = os.path.basename(gcs_uri)
+    encoding = get_audio_encoding(file_name)
 
     audio = speech.RecognitionAudio(uri=gcs_uri)
     config = speech.RecognitionConfig(
@@ -121,6 +137,13 @@ if __name__ == "__main__":
     LOCAL_AUDIO_FILE = "audio.wav"
     GCS_BLOB_NAME = "uploaded_audio" + os.path.splitext(LOCAL_AUDIO_FILE)[1]
 
+    # Thiết lập xác thực từ file JSON (file nằm cùng thư mục với main.py)
+    try:
+        credentials = set_google_credentials()
+    except FileNotFoundError as e:
+        print(f"🔴 Lỗi: {e}")
+        exit(1)
+
     # Kiểm tra file âm thanh tồn tại
     if not os.path.exists(LOCAL_AUDIO_FILE):
         print(f"Lỗi: Không tìm thấy file âm thanh '{LOCAL_AUDIO_FILE}'")
@@ -129,11 +152,11 @@ if __name__ == "__main__":
 
         try:
             # Bước 1: Upload lên GCS
-            gcs_uri = upload_to_gcs(BUCKET_NAME, LOCAL_AUDIO_FILE, GCS_BLOB_NAME)
+            gcs_uri = upload_to_gcs(credentials, BUCKET_NAME, LOCAL_AUDIO_FILE, GCS_BLOB_NAME)
 
             # Bước 2: Nhận diện giọng nói
             print("Đang gửi yêu cầu nhận diện giọng nói...")
-            transcript, srt_lines = transcribe_gcs(gcs_uri, language_code="vi-VN")
+            transcript, srt_lines = transcribe_gcs(credentials, gcs_uri, language_code="vi-VN")
 
             # Bước 3: Lưu kết quả
             save_txt(transcript, "recognized_text.txt")
@@ -141,7 +164,7 @@ if __name__ == "__main__":
 
         finally:
             # Bước 4: Luôn xóa file trên GCS sau khi hoàn tất
-            delete_from_gcs(BUCKET_NAME, GCS_BLOB_NAME)
+            delete_from_gcs(credentials, BUCKET_NAME, GCS_BLOB_NAME)
 
             # Tính và in thời gian xử lý
             end_time = time.time()
