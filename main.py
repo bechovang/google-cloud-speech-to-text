@@ -18,6 +18,27 @@ def set_google_credentials():
     )
     return credentials
 
+# === Tìm file âm thanh có tên chứa "audio" ===
+def find_audio_file():
+    """Tìm file âm thanh có tên chứa 'audio' trong thư mục hiện tại"""
+    supported_extensions = ['.mp3', '.wav', '.flac', '.ogg', '.amr', '.awb']
+    
+    # Tìm tất cả file trong thư mục hiện tại
+    for file in os.listdir('.'):
+        if os.path.isfile(file):
+            # Kiểm tra xem tên file có chứa "audio" và có định dạng âm thanh được hỗ trợ
+            if 'audio' in file.lower() and any(file.lower().endswith(ext) for ext in supported_extensions):
+                return file
+    
+    return None
+
+# === Kiểm tra kích thước file ===
+def get_file_size_mb(file_path):
+    """Lấy kích thước file theo MB"""
+    size_bytes = os.path.getsize(file_path)
+    size_mb = size_bytes / (1024 * 1024)
+    return size_mb
+
 # === Xác định loại file âm thanh ===
 def get_audio_encoding(file_name):
     _, ext = os.path.splitext(file_name)
@@ -75,7 +96,14 @@ def transcribe_gcs(credentials, gcs_uri, language_code="vi-VN"):
 
     operation = client.long_running_recognize(config=config, audio=audio)
     print("Đang xử lý... Vui lòng đợi.")
-    response = operation.result(timeout=300)
+    
+    try:
+        # Tăng timeout lên 10 phút cho file lớn
+        response = operation.result(timeout=600)
+    except Exception as e:
+        print(f"🔴 Lỗi trong quá trình nhận diện: {e}")
+        print("💡 Gợi ý: File âm thanh có thể quá lớn hoặc định dạng không tương thích")
+        raise e
 
     full_transcript = ""
     srt_lines = []
@@ -115,7 +143,7 @@ def to_srt_time(seconds):
 def save_txt(text, output_file="recognized_text.txt"):
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(text)
-    print(f"Kết quả nhận diện đã được lưu vào: {output_file}")
+    print(f"📄 Kết quả nhận diện đã được lưu vào: {output_file}")
 
 
 # === Lưu nội dung thành file SRT ===
@@ -123,8 +151,28 @@ def save_srt(srt_lines, output_file="recognized_subtitles.srt"):
     with open(output_file, "w", encoding="utf-8") as f:
         for line in srt_lines:
             f.write(line + "\n")
-    print(f"Phụ đề đã được lưu vào: {output_file}")
+    print(f"📝 Phụ đề đã được lưu vào: {output_file}")
 
+
+# === CHỌN NGÔN NGỮ ===
+def select_language():
+    """Cho phép người dùng chọn ngôn ngữ"""
+    print("\n🌐 CHỌN NGÔN NGỮ:")
+    print("0 - Tiếng Việt (vi-VN)")
+    print("1 - Tiếng Anh (en-US)")
+    
+    while True:
+        try:
+            choice = input("Nhập lựa chọn (0 hoặc 1): ").strip()
+            if choice == "0":
+                return "vi-VN", "Tiếng Việt"
+            elif choice == "1":
+                return "en-US", "Tiếng Anh"
+            else:
+                print("❌ Lựa chọn không hợp lệ. Vui lòng nhập 0 hoặc 1.")
+        except KeyboardInterrupt:
+            print("\n👋 Tạm biệt!")
+            exit(0)
 
 # === CHẠY TOÀN BỘ ===
 if __name__ == "__main__":
@@ -134,8 +182,13 @@ if __name__ == "__main__":
     # Thông tin dự án và bucket
     PROJECT_ID = "speach-to-text-462517"
     BUCKET_NAME = "bechovang-speach-to-text"
-    LOCAL_AUDIO_FILE = "audio.wav"
-    GCS_BLOB_NAME = "uploaded_audio" + os.path.splitext(LOCAL_AUDIO_FILE)[1]
+    
+    # Tìm file âm thanh có tên chứa "audio"
+    LOCAL_AUDIO_FILE = find_audio_file()
+    
+    # Chọn ngôn ngữ
+    language_code, language_name = select_language()
+    print(f"✅ Đã chọn: {language_name}")
 
     # Thiết lập xác thực từ file JSON (file nằm cùng thư mục với main.py)
     try:
@@ -145,26 +198,46 @@ if __name__ == "__main__":
         exit(1)
 
     # Kiểm tra file âm thanh tồn tại
-    if not os.path.exists(LOCAL_AUDIO_FILE):
-        print(f"Lỗi: Không tìm thấy file âm thanh '{LOCAL_AUDIO_FILE}'")
+    if not LOCAL_AUDIO_FILE:
+        print(f"Lỗi: Không tìm thấy file âm thanh có tên chứa 'audio' trong thư mục hiện tại")
+        print("Các định dạng được hỗ trợ: .mp3, .wav, .flac, .ogg, .amr, .awb")
+        exit(1)
     else:
+        # Kiểm tra kích thước file
+        file_size_mb = get_file_size_mb(LOCAL_AUDIO_FILE)
         print(f"Đang bắt đầu xử lý file âm thanh: {LOCAL_AUDIO_FILE}")
+        print(f"📁 Kích thước file: {file_size_mb:.2f} MB")
+        
+        if file_size_mb > 10:
+            print("⚠️ Cảnh báo: File âm thanh khá lớn, có thể mất nhiều thời gian xử lý")
+            print("💡 Gợi ý: Nếu gặp timeout, hãy thử với file nhỏ hơn (< 5MB)")
+        
+        # Tạo tên file cho GCS
+        GCS_BLOB_NAME = "uploaded_audio" + os.path.splitext(LOCAL_AUDIO_FILE)[1]
 
         try:
             # Bước 1: Upload lên GCS
             gcs_uri = upload_to_gcs(credentials, BUCKET_NAME, LOCAL_AUDIO_FILE, GCS_BLOB_NAME)
 
             # Bước 2: Nhận diện giọng nói
-            print("Đang gửi yêu cầu nhận diện giọng nói...")
-            transcript, srt_lines = transcribe_gcs(credentials, gcs_uri, language_code="vi-VN")
+            print(f"Đang gửi yêu cầu nhận diện giọng nói ({language_name})...")
+            transcript, srt_lines = transcribe_gcs(credentials, gcs_uri, language_code=language_code)
 
             # Bước 3: Lưu kết quả
-            save_txt(transcript, "recognized_text.txt")
-            save_srt(srt_lines, "recognized_subtitles.srt")
-
+            save_txt(transcript, f"recognized_text_{language_code}.txt")
+            save_srt(srt_lines, f"recognized_subtitles_{language_code}.srt")
+            
+            print(f"✅ Hoàn tất toàn bộ quá trình!")
+            
+        except Exception as e:
+            print(f"🔴 Lỗi trong quá trình xử lý: {e}")
+            print("💡 Vui lòng kiểm tra lại file âm thanh và thử lại")
         finally:
             # Bước 4: Luôn xóa file trên GCS sau khi hoàn tất
-            delete_from_gcs(credentials, BUCKET_NAME, GCS_BLOB_NAME)
+            try:
+                delete_from_gcs(credentials, BUCKET_NAME, GCS_BLOB_NAME)
+            except Exception as e:
+                print(f"⚠️ Không thể xóa file trên GCS: {e}")
 
             # Tính và in thời gian xử lý
             end_time = time.time()
@@ -172,5 +245,4 @@ if __name__ == "__main__":
             minutes = int(elapsed_time // 60)
             seconds = int(elapsed_time % 60)
 
-            print(f"✅ Hoàn tất toàn bộ quá trình!")
             print(f"⏱️ Tổng thời gian xử lý: {minutes} phút {seconds} giây")

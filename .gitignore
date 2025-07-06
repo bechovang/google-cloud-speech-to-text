@@ -30,3 +30,7 @@ speech-stt-sa.json
 # Các tệp của hệ điều hành (macOS, Windows, Linux)
 .DS_Store
 Thumbs.db
+
+
+*.wav
+*.mp3
