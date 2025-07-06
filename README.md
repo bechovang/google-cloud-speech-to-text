@@ -20,7 +20,7 @@ Dự án này sử dụng **API Google Cloud Speech-to-Text** để chuyển đ�
 
 1. **Python 3.x**
 2. **Các thư viện Python cần thiết**: Cài đặt thư viện bằng `pip` (đã liệt kê trong `requirements.txt`).
-3. **File JSON credentials**: Đảm bảo bạn đã có **file JSON credentials** từ **Google Cloud Service Account** (cung cấp sẵn). giải nén file zip ra là xong, pass giải nén [ib t gửi cho](https://www.facebook.com/nguyen.ngoc.phuc.511590/).
+3. **File JSON credentials**: Đảm bảo bạn đã có **file JSON credentials** từ **Google Cloud Service Account** (cung cấp sẵn). giải nén file zip ra là xong, pass giải nén: phuc2006
 
 ## Cài đặt và sử dụng
 
