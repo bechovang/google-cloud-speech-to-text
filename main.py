@@ -1,7 +1,11 @@
 import os
 import time
+import tempfile
+import numpy as np
 from google.cloud import storage, speech
 from google.oauth2 import service_account
+from pydub import AudioSegment
+from pydub.silence import split_on_silence
 
 # === Tự động thiết lập xác thực từ file JSON (file nằm cùng thư mục với main.py) ===
 def set_google_credentials():
@@ -12,11 +16,11 @@ def set_google_credentials():
     if not os.path.exists(json_credentials_path):
         raise FileNotFoundError(f"Không tìm thấy file JSON credentials tại {json_credentials_path}. Vui lòng kiểm tra lại file credentials.")
 
-    # Tự động thiết lập các thông tin xác thực cho Google Cloud
-    credentials = service_account.Credentials.from_service_account_file(
-        json_credentials_path
-    )
-    return credentials
+    # Thiết lập environment variable cho Google Cloud
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = json_credentials_path
+    print(f"✅ Đã thiết lập credentials từ: {json_credentials_path}")
+    
+    return True
 
 # === Tìm file âm thanh có tên chứa "audio" ===
 def find_audio_file():
@@ -39,6 +43,34 @@ def get_file_size_mb(file_path):
     size_mb = size_bytes / (1024 * 1024)
     return size_mb
 
+# === Xử lý file âm thanh đơn giản ===
+def process_single_audio_file(bucket_name, audio_file_path, language_code):
+    """
+    Xử lý một file âm thanh duy nhất
+    """
+    print(f"🎵 Đang xử lý file âm thanh...")
+    
+    # Kiểm tra kích thước file
+    file_size_mb = get_file_size_mb(audio_file_path)
+    print(f"📁 Kích thước file: {file_size_mb:.2f} MB")
+    
+    try:
+        # Upload file âm thanh lên GCS
+        blob_name = "audio_file.wav"
+        gcs_uri = upload_to_gcs(bucket_name, audio_file_path, blob_name)
+        
+        # Nhận diện file âm thanh
+        transcript, srt_lines = transcribe_gcs(gcs_uri, language_code)
+        
+        # Xóa file trên GCS
+        delete_from_gcs(bucket_name, blob_name)
+        
+        return transcript, srt_lines
+        
+    except Exception as e:
+        print(f"❌ Lỗi khi xử lý file: {e}")
+        raise e
+
 # === Xác định loại file âm thanh ===
 def get_audio_encoding(file_name):
     _, ext = os.path.splitext(file_name)
@@ -54,10 +86,33 @@ def get_audio_encoding(file_name):
         raise ValueError(f"Định dạng file '{ext}' chưa được hỗ trợ.")
     return encodings[ext.lower()]
 
+# === Kiểm tra và chuyển đổi file âm thanh sang mono ===
+def convert_to_mono_if_needed(audio_file_path):
+    """Chuyển đổi file âm thanh sang mono nếu cần thiết"""
+    try:
+        audio = AudioSegment.from_file(audio_file_path)
+        if audio.channels > 1:
+            print(f"🔄 Chuyển đổi từ {audio.channels} kênh sang mono...")
+            audio_mono = audio.set_channels(1)
+            
+            # Tạo file tạm mới
+            temp_dir = tempfile.mkdtemp()
+            mono_file_path = os.path.join(temp_dir, "mono_audio.wav")
+            audio_mono.export(mono_file_path, format="wav")
+            
+            print(f"✅ Đã chuyển đổi sang mono: {mono_file_path}")
+            return mono_file_path, temp_dir
+        else:
+            print("✅ File âm thanh đã là mono")
+            return audio_file_path, None
+    except Exception as e:
+        print(f"⚠️ Không thể chuyển đổi sang mono: {e}")
+        return audio_file_path, None
+
 
 # === Upload file âm thanh lên GCS ===
-def upload_to_gcs(credentials, bucket_name, source_file_name, destination_blob_name):
-    storage_client = storage.Client(credentials=credentials)
+def upload_to_gcs(bucket_name, source_file_name, destination_blob_name):
+    storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(destination_blob_name)
 
@@ -68,8 +123,8 @@ def upload_to_gcs(credentials, bucket_name, source_file_name, destination_blob_n
 
 
 # === Xóa file trên GCS ===
-def delete_from_gcs(credentials, bucket_name, blob_name):
-    storage_client = storage.Client(credentials=credentials)
+def delete_from_gcs(bucket_name, blob_name):
+    storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_name)
 
@@ -79,8 +134,9 @@ def delete_from_gcs(credentials, bucket_name, blob_name):
 
 
 # === Nhận diện giọng nói từ URI GCS ===
-def transcribe_gcs(credentials, gcs_uri, language_code="vi-VN"):
-    client = speech.SpeechClient(credentials=credentials)
+def transcribe_gcs(gcs_uri, language_code="vi-VN"):
+    # Tạo client - sử dụng credentials từ environment hoặc file
+    client = speech.SpeechClient()
 
     # Lấy tên file từ gcs_uri và xác định encoding
     file_name = os.path.basename(gcs_uri)
@@ -174,6 +230,8 @@ def select_language():
             print("\n👋 Tạm biệt!")
             exit(0)
 
+
+
 # === CHẠY TOÀN BỘ ===
 if __name__ == "__main__":
     # Thêm: Đo thời gian bắt đầu
@@ -192,7 +250,7 @@ if __name__ == "__main__":
 
     # Thiết lập xác thực từ file JSON (file nằm cùng thư mục với main.py)
     try:
-        credentials = set_google_credentials()
+        set_google_credentials()
     except FileNotFoundError as e:
         print(f"🔴 Lỗi: {e}")
         exit(1)
@@ -216,28 +274,36 @@ if __name__ == "__main__":
         GCS_BLOB_NAME = "uploaded_audio" + os.path.splitext(LOCAL_AUDIO_FILE)[1]
 
         try:
-            # Bước 1: Upload lên GCS
-            gcs_uri = upload_to_gcs(credentials, BUCKET_NAME, LOCAL_AUDIO_FILE, GCS_BLOB_NAME)
-
-            # Bước 2: Nhận diện giọng nói
-            print(f"Đang gửi yêu cầu nhận diện giọng nói ({language_name})...")
-            transcript, srt_lines = transcribe_gcs(credentials, gcs_uri, language_code=language_code)
+            # Bước 1: Chuyển đổi sang mono nếu cần
+            print("🔧 Bắt đầu xử lý âm thanh...")
+            mono_file, mono_temp_dir = convert_to_mono_if_needed(LOCAL_AUDIO_FILE)
+            
+            # Bước 2: Xử lý file âm thanh
+            print(f"🎵 Bắt đầu xử lý file âm thanh ({language_name})...")
+            transcript, srt_lines = process_single_audio_file(
+                BUCKET_NAME, mono_file, language_code
+            )
 
             # Bước 3: Lưu kết quả
-            save_txt(transcript, f"recognized_text_{language_code}.txt")
-            save_srt(srt_lines, f"recognized_subtitles_{language_code}.srt")
-            
-            print(f"✅ Hoàn tất toàn bộ quá trình!")
+            if transcript.strip():
+                save_txt(transcript, f"recognized_text_{language_code}.txt")
+                save_srt(srt_lines, f"recognized_subtitles_{language_code}.srt")
+                print(f"✅ Hoàn tất toàn bộ quá trình!")
+            else:
+                print("❌ Không có nội dung nào được nhận diện")
             
         except Exception as e:
             print(f"🔴 Lỗi trong quá trình xử lý: {e}")
             print("💡 Vui lòng kiểm tra lại file âm thanh và thử lại")
         finally:
-            # Bước 4: Luôn xóa file trên GCS sau khi hoàn tất
+            # Dọn dẹp thư mục tạm
             try:
-                delete_from_gcs(credentials, BUCKET_NAME, GCS_BLOB_NAME)
+                import shutil
+                if mono_temp_dir:
+                    shutil.rmtree(mono_temp_dir)
+                    print("🧹 Đã dọn dẹp file tạm mono")
             except Exception as e:
-                print(f"⚠️ Không thể xóa file trên GCS: {e}")
+                print(f"⚠️ Lỗi khi dọn dẹp: {e}")
 
             # Tính và in thời gian xử lý
             end_time = time.time()
